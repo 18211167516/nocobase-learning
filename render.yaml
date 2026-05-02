@@ -1,36 +1,24 @@
+# Render Blueprint - NocoBase Learning Platform
+# Deploy this file from Render Dashboard: New -> Blueprint -> Select this repo
+
 services:
+  # Backend API Service
   - type: web
-    name: nocobase-learning-backend
+    name: nocobase-backend
     env: python
-    plan: free
     region: singapore
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    rootDir: backend
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
-    autoDeploy: true
-    branch: main
+    healthCheckPath: /
 
+  # Frontend Static Site  
   - type: web
-    name: nocobase-learning-frontend
+    name: nocobase-frontend
     env: static
-    plan: free
     region: singapore
     buildCommand: npm install && npm run build
-    staticPublishPath: ./dist
-    rootDir: frontend
-    envVars:
-      - key: VITE_API_URL
-        fromService:
-          type: web
-          name: nocobase-learning-backend
-          envVarKey: RENDER_EXTERNAL_URL
-    routes:
-      - type: redirect
-        source: /api/(.*)
-        destination: https://nocobase-learning-backend.onrender.com/$1
-        action: replace
-    autoDeploy: true
-    branch: main
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
