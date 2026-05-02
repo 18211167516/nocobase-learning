@@ -6,12 +6,17 @@ const getBaseURL = () => {
     return import.meta.env.VITE_API_URL
   }
   
+  // Vercel 生产环境 - 使用相对路径，通过 vercel.json 代理
+  if (import.meta.env.PROD) {
+    return '/api'
+  }
+  
   // 开发环境
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return '/api'
   }
   
-  // 生产环境 - 假设前后端在同一域名下，或者根据部署情况配置
+  // 生产环境
   return '/api'
 }
 
