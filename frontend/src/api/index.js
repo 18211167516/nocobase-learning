@@ -6,9 +6,9 @@ const getBaseURL = () => {
     return import.meta.env.VITE_API_URL
   }
   
-  // Vercel 生产环境 - 使用相对路径，通过 vercel.json 代理
+  // 生产环境 - 直接指向 Render 后端
   if (import.meta.env.PROD) {
-    return '/api'
+    return 'https://nocobase-learning.onrender.com'
   }
   
   // 开发环境
@@ -16,8 +16,8 @@ const getBaseURL = () => {
     return '/api'
   }
   
-  // 生产环境
-  return '/api'
+  // 生产环境默认
+  return 'https://nocobase-learning.onrender.com'
 }
 
 const api = axios.create({
