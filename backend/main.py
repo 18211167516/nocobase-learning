@@ -10,6 +10,7 @@ import random
 import requests
 import base64
 import hashlib
+import hmac
 import time
 
 app = FastAPI(title="NocoBase Learning API", version="1.0.0")
@@ -22,39 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BAIDU_APP_ID = "7696362"
-BAIDU_API_KEY = "MDKyi4a5AKpWRYgFFZWkzlFJ"
-BAIDU_SECRET_KEY = "7zEoVgQTCiYi3OVxQaj7U81fc2FgZlad"
-
-access_token = None
-token_expire_time = 0
-
-def get_baidu_access_token():
-    global access_token, token_expire_time
-    
-    if access_token and time.time() < token_expire_time:
-        return access_token
-    
-    url = "https://aip.baidubce.com/oauth/2.0/token"
-    params = {
-        "grant_type": "client_credentials",
-        "client_id": BAIDU_API_KEY,
-        "client_secret": BAIDU_SECRET_KEY
-    }
-    
-    try:
-        response = requests.post(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        
-        access_token = data.get("access_token")
-        expires_in = data.get("expires_in", 3600)
-        token_expire_time = time.time() + expires_in - 60
-        
-        return access_token
-    except Exception as e:
-        print(f"获取百度访问令牌失败: {e}")
-        return None
+XUNFEI_APP_ID = "41456dde"
+XUNFEI_API_KEY = "9e9d5316158aa676ef2bd954973e9dc8"
+XUNFEI_API_SECRET = "MmExZjhhZWY4M2EwNDBjMGRjMmM2M2Jl"
 
 DATABASE = "nocobase_learning.db"
 
@@ -871,32 +842,49 @@ class SpeechRequest(BaseModel):
 
 @app.post("/speech-to-text")
 def speech_to_text(request: SpeechRequest):
-    token = get_baidu_access_token()
-    if not token:
-        raise HTTPException(status_code=500, detail="无法获取百度语音服务令牌")
-    
     try:
         audio_bytes = base64.b64decode(request.audio_data)
         
-        url = f"https://vop.baidu.com/server_api"
-        params = {
-            "cuid": hashlib.md5(BAIDU_API_KEY.encode()).hexdigest(),
-            "token": token,
-            "dev_pid": 1537
+        cur_time = str(int(time.time()))
+        param_type = "iAT"
+        engine_type = "sms-en16k"
+        
+        param_dict = {
+            "engine_type": engine_type,
+            "aue": "raw"
         }
+        param_bytes = json.dumps(param_dict).encode('utf-8')
+        param_base64 = base64.b64encode(param_bytes).decode('utf-8')
+        
+        m2 = hashlib.md5()
+        m2.update((XUNFEI_API_KEY + cur_time + param_base64).encode('utf-8'))
+        checksum = m2.hexdigest()
         
         headers = {
-            "Content-Type": "audio/pcm; rate=16000"
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+            "X-Appid": XUNFEI_APP_ID,
+            "X-CurTime": cur_time,
+            "X-Param": param_base64,
+            "X-CheckSum": checksum
         }
         
-        response = requests.post(url, params=params, headers=headers, data=audio_bytes)
-        response.raise_for_status()
+        data = {
+            "audio": request.audio_data
+        }
+        
+        url = "http://api.xfyun.cn/v1/service/v1/iat"
+        response = requests.post(url, headers=headers, data=data, timeout=10)
         result = response.json()
         
-        if result.get("err_no") == 0:
-            return {"success": True, "result": result.get("result", [])}
+        print(f"讯飞API返回: {result}")
+        
+        if result.get("code") == "0":
+            data_str = result.get("data", "")
+            return {"success": True, "result": [data_str]}
         else:
-            return {"success": False, "error": result.get("err_msg", "语音识别失败")}
+            error_msg = result.get("desc", "语音识别失败")
+            print(f"讯飞API错误: {error_msg}")
+            return {"success": False, "error": error_msg}
             
     except Exception as e:
         print(f"语音识别错误: {e}")
