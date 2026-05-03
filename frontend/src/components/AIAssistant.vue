@@ -379,13 +379,19 @@ const startVoiceInput = async () => {
   }
 
   try {
-    const permission = await navigator.mediaPermissions.query({ name: 'microphone' })
-    if (permission.state === 'denied') {
-      showVoiceStatus('error', '请允许麦克风权限')
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    stream.getTracks().forEach(track => track.stop())
+  } catch (e) {
+    if (e.name === 'NotAllowedError') {
+      showVoiceStatus('error', '请点击地址栏🔒允许麦克风权限')
+      return
+    } else if (e.name === 'NotFoundError') {
+      showVoiceStatus('error', '未检测到麦克风设备')
+      return
+    } else {
+      showVoiceStatus('error', '麦克风访问失败')
       return
     }
-  } catch (e) {
-    console.log('Permission check not supported')
   }
 
   const SpeechRecognition = SpeechRecognitionAPI
@@ -428,10 +434,10 @@ const startVoiceInput = async () => {
     recordingDuration.value = 0
     
     const errorMessages = {
-      'not-allowed': '请允许麦克风权限',
+      'not-allowed': '请点击地址栏🔒允许麦克风权限',
       'no-speech': '说话时间太短',
-      'network': '网络错误',
-      'audio-capture': '未检测到麦克风',
+      'network': '网络错误，请检查网络',
+      'audio-capture': '未检测到麦克风设备',
       'aborted': ''
     }
     
