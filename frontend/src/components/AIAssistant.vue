@@ -449,12 +449,13 @@ const startVoiceInput = async () => {
   recognition.onend = () => {
     clearInterval(recordingTimer.value)
     const duration = recordingDuration.value
+    const transcript = inputMessage.value.trim()
     isRecording.value = false
     recordingDuration.value = 0
     
-    if (duration < 1) {
+    if (duration < 1 && !transcript) {
       showVoiceStatus('cancel')
-    } else if (inputMessage.value.trim()) {
+    } else if (transcript) {
       showVoiceStatus('done')
       setTimeout(() => {
         sendMessage()
@@ -472,13 +473,23 @@ const startVoiceInput = async () => {
 
 const stopVoiceInput = () => {
   if (recognition) {
-    recognition.stop()
+    try {
+      recognition.stop()
+    } catch (e) {
+      console.error('Stop recognition error:', e)
+    }
   }
+  clearInterval(recordingTimer.value)
+  isRecording.value = false
 }
 
 const cancelVoiceInput = () => {
   if (recognition) {
-    recognition.abort()
+    try {
+      recognition.abort()
+    } catch (e) {
+      console.error('Abort recognition error:', e)
+    }
   }
   inputMessage.value = ''
   showVoiceStatus('cancel')
