@@ -54,34 +54,64 @@
         </div>
 
         <div class="ai-input-area">
-          <button 
-            @click="toggleVoiceInput" 
-            class="voice-btn"
-            :class="{ recording: isRecording }"
-            :title="isRecording ? '点击停止录音' : '点击开始语音输入'"
-          >
-            {{ isRecording ? '⏹️' : '🎤' }}
-          </button>
           <input
             v-model="inputMessage"
             @keyup.enter="sendMessage"
-            placeholder="输入问题或点击麦克风语音输入..."
+            placeholder="输入问题..."
             class="ai-input"
             :disabled="isLoading"
           />
-          <button @click="sendMessage" class="send-btn" :disabled="!inputMessage.trim() || isLoading">
+          <div 
+            class="voice-input-wrapper"
+            @touchstart.prevent="handleTouchStart"
+            @touchend.prevent="handleTouchEnd"
+            @touchcancel="handleTouchCancel"
+            @mousedown="handleMouseDown"
+            @mouseup="handleMouseUp"
+            @mouseleave="handleMouseUp"
+            :class="{ 'is-recording': isRecording }"
+          >
+            <div v-if="!isRecording" class="voice-btn-normal">
+              <span class="voice-icon">🎤</span>
+              <span class="voice-text">长按说话</span>
+            </div>
+            <div v-else class="voice-btn-recording">
+              <div class="recording-animation">
+                <span></span><span></span><span></span>
+              </div>
+              <span class="recording-time">{{ recordingDuration }}s</span>
+            </div>
+          </div>
+          <button 
+            v-if="inputMessage.trim() || isRecording"
+            @click="sendMessage" 
+            class="send-btn" 
+            :disabled="isLoading || isRecording"
+          >
             发送
           </button>
+          <div v-else class="send-btn-placeholder">发送</div>
         </div>
 
-        <div v-if="isRecording" class="recording-indicator">
-          <div class="recording-wave">
-            <span></span><span></span><span></span><span></span><span></span>
+        <transition name="slide-up">
+          <div v-if="voiceStatus" class="voice-status-popup" :class="voiceStatus">
+            <div v-if="voiceStatus === 'recording'" class="status-recording">
+              <div class="pulse-ring"></div>
+              <span>🎤 录音中...</span>
+            </div>
+            <div v-else-if="voiceStatus === 'done'" class="status-done">
+              <span>✅ 已识别</span>
+            </div>
+            <div v-else-if="voiceStatus === 'cancel'" class="status-cancel">
+              <span>❌ 已取消</span>
+            </div>
+            <div v-else-if="voiceStatus === 'error'" class="status-error">
+              <span>⚠️ {{ voiceErrorMsg }}</span>
+            </div>
           </div>
-          <span>{{ voiceTip || '正在录音...点击麦克风停止' }}</span>
-        </div>
+        </transition>
         
-        <div v-if="voiceError" class="voice-error-tip">
+        <div v-if="voiceError && !voiceStatus" class="voice-error-tip">
           <span>⚠️ {{ voiceError }}</span>
         </div>
       </div>
@@ -102,6 +132,14 @@ const ttsEnabled = ref(true)
 const messagesContainer = ref(null)
 const voiceTip = ref('')
 const voiceError = ref('')
+const voiceStatus = ref('')
+const voiceErrorMsg = ref('')
+const recordingDuration = ref(0)
+const recordingStartTime = ref(null)
+const recordingTimer = ref(null)
+const longPressTimer = ref(null)
+const isLongPress = ref(false)
+const touchStartY = ref(0)
 
 let recognition = null
 let synthesis = window.speechSynthesis
@@ -270,36 +308,84 @@ const generateQuiz = () => {
   return `📝 **练习题来了！**\n\n**问题：** ${quiz.question}\n\n${quiz.hint}\n\n想看答案吗？输入"答案"我就告诉你！`
 }
 
-const toggleVoiceInput = () => {
+const handleTouchStart = (e) => {
+  touchStartY.value = e.touches[0].clientY
+  isLongPress.value = true
+  longPressTimer.value = setTimeout(() => {
+    if (isLongPress.value) {
+      startVoiceInput()
+    }
+  }, 200)
+}
+
+const handleTouchEnd = (e) => {
+  const touchEndY = e.changedTouches[0].clientY
+  const deltaY = touchStartY.value - touchEndY
+  
+  clearTimeout(longPressTimer.value)
+  isLongPress.value = false
+  
   if (isRecording.value) {
-    stopVoiceInput()
-  } else {
-    voiceError.value = ''
-    startVoiceInput()
+    if (deltaY > 50) {
+      cancelVoiceInput()
+    } else {
+      stopVoiceInput()
+    }
   }
 }
 
-const showVoiceError = (msg) => {
-  voiceError.value = msg
+const handleTouchCancel = () => {
+  clearTimeout(longPressTimer.value)
+  isLongPress.value = false
+  if (isRecording.value) {
+    cancelVoiceInput()
+  }
+}
+
+const handleMouseDown = (e) => {
+  isLongPress.value = true
+  longPressTimer.value = setTimeout(() => {
+    if (isLongPress.value) {
+      startVoiceInput()
+    }
+  }, 200)
+}
+
+const handleMouseUp = () => {
+  clearTimeout(longPressTimer.value)
+  isLongPress.value = false
+  if (isRecording.value) {
+    stopVoiceInput()
+  }
+}
+
+const showVoiceStatus = (status, msg = '') => {
+  voiceStatus.value = status
+  if (msg) {
+    voiceErrorMsg.value = msg
+  }
   setTimeout(() => {
-    voiceError.value = ''
-  }, 4000)
+    voiceStatus.value = ''
+    voiceErrorMsg.value = ''
+  }, 1500)
 }
 
-const showRecordingTip = (msg) => {
-  voiceTip.value = msg
-}
-
-const hideRecordingTip = () => {
-  voiceTip.value = ''
-}
-
-const startVoiceInput = () => {
+const startVoiceInput = async () => {
   const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
   
   if (!SpeechRecognitionAPI) {
-    showVoiceError('您的浏览器不支持语音识别，请使用 Chrome、Edge 或 Safari 浏览器')
+    showVoiceStatus('error', '浏览器不支持语音识别')
     return
+  }
+
+  try {
+    const permission = await navigator.mediaPermissions.query({ name: 'microphone' })
+    if (permission.state === 'denied') {
+      showVoiceStatus('error', '请允许麦克风权限')
+      return
+    }
+  } catch (e) {
+    console.log('Permission check not supported')
   }
 
   const SpeechRecognition = SpeechRecognitionAPI
@@ -311,7 +397,15 @@ const startVoiceInput = () => {
 
   recognition.onstart = () => {
     isRecording.value = true
-    showRecordingTip('正在聆听，请说话...')
+    recordingStartTime.value = Date.now()
+    showVoiceStatus('recording')
+    
+    recordingTimer.value = setInterval(() => {
+      recordingDuration.value = Math.floor((Date.now() - recordingStartTime.value) / 1000)
+      if (recordingDuration.value >= 60) {
+        stopVoiceInput()
+      }
+    }, 1000)
   }
 
   recognition.onresult = (event) => {
@@ -324,47 +418,48 @@ const startVoiceInput = () => {
     if (event.results[event.results.length - 1].isFinal) {
       const finalTranscript = transcript
       inputMessage.value = finalTranscript
-      hideRecordingTip()
-      
-      if (finalTranscript.trim()) {
-        setTimeout(() => {
-          sendMessage()
-        }, 300)
-      }
     }
   }
 
   recognition.onerror = (event) => {
     console.error('Speech recognition error:', event.error)
+    clearInterval(recordingTimer.value)
     isRecording.value = false
-    hideRecordingTip()
+    recordingDuration.value = 0
     
     const errorMessages = {
-      'not-allowed': '请允许麦克风权限后重试',
-      'no-speech': '未检测到语音，请重试',
-      'network': '网络错误，请检查网络连接',
-      'audio-capture': '未检测到麦克风设备',
-      'aborted': '语音识别已取消'
+      'not-allowed': '请允许麦克风权限',
+      'no-speech': '说话时间太短',
+      'network': '网络错误',
+      'audio-capture': '未检测到麦克风',
+      'aborted': ''
     }
     
-    showVoiceError(errorMessages[event.error] || '语音识别出错，请重试')
+    if (event.error !== 'aborted') {
+      showVoiceStatus('error', errorMessages[event.error] || '语音识别出错')
+    }
   }
 
   recognition.onend = () => {
+    clearInterval(recordingTimer.value)
+    const duration = recordingDuration.value
     isRecording.value = false
-    hideRecordingTip()
+    recordingDuration.value = 0
     
-    if (inputMessage.value.trim()) {
+    if (duration < 1) {
+      showVoiceStatus('cancel')
+    } else if (inputMessage.value.trim()) {
+      showVoiceStatus('done')
       setTimeout(() => {
         sendMessage()
-      }, 300)
+      }, 500)
     }
   }
 
   try {
     recognition.start()
   } catch (e) {
-    showVoiceError('启动语音识别失败，请刷新页面重试')
+    showVoiceStatus('error', '启动失败，请重试')
     isRecording.value = false
   }
 }
@@ -372,8 +467,18 @@ const startVoiceInput = () => {
 const stopVoiceInput = () => {
   if (recognition) {
     recognition.stop()
-    isRecording.value = false
   }
+}
+
+const cancelVoiceInput = () => {
+  if (recognition) {
+    recognition.abort()
+  }
+  inputMessage.value = ''
+  showVoiceStatus('cancel')
+  isRecording.value = false
+  clearInterval(recordingTimer.value)
+  recordingDuration.value = 0
 }
 
 onMounted(() => {
@@ -383,6 +488,12 @@ onMounted(() => {
 onUnmounted(() => {
   if (recognition) {
     recognition.stop()
+  }
+  if (recordingTimer.value) {
+    clearInterval(recordingTimer.value)
+  }
+  if (longPressTimer.value) {
+    clearTimeout(longPressTimer.value)
   }
   synthesis.cancel()
 })
@@ -632,34 +743,6 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.voice-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: none;
-  background: #f0f2ff;
-  font-size: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.voice-btn:hover {
-  background: #667eea;
-}
-
-.voice-btn.recording {
-  background: #f5576c;
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-
 .ai-input {
   flex: 1;
   border: 2px solid #e0e0e0;
@@ -672,6 +755,84 @@ onUnmounted(() => {
 
 .ai-input:focus {
   border-color: #667eea;
+}
+
+.voice-input-wrapper {
+  width: 80px;
+  height: 40px;
+  border-radius: 20px;
+  background: #f0f2ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s;
+  touch-action: manipulation;
+}
+
+.voice-input-wrapper:hover {
+  background: #e8ebff;
+}
+
+.voice-input-wrapper:active {
+  transform: scale(0.95);
+}
+
+.voice-input-wrapper.is-recording {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  width: 90px;
+}
+
+.voice-btn-normal {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.voice-icon {
+  font-size: 18px;
+}
+
+.voice-text {
+  font-size: 12px;
+  color: #667eea;
+}
+
+.voice-btn-recording {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: white;
+}
+
+.recording-animation {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.recording-animation span {
+  width: 4px;
+  height: 12px;
+  background: white;
+  border-radius: 2px;
+  animation: recordingBounce 0.6s infinite ease-in-out;
+}
+
+.recording-animation span:nth-child(1) { animation-delay: 0s; }
+.recording-animation span:nth-child(2) { animation-delay: 0.2s; }
+.recording-animation span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes recordingBounce {
+  0%, 100% { height: 6px; }
+  50% { height: 14px; }
+}
+
+.recording-time {
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
 }
 
 .send-btn {
@@ -696,44 +857,66 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-.recording-indicator {
+.send-btn-placeholder {
+  background: #e0e0e0;
+  color: #999;
+  border-radius: 25px;
+  padding: 10px 20px;
+  font-size: 14px;
+}
+
+.voice-status-popup {
   position: absolute;
   bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.8);
-  color: white;
-  padding: 10px 20px;
+  padding: 15px 25px;
   border-radius: 20px;
-  font-size: 13px;
+  font-size: 14px;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.recording-wave {
-  display: flex;
-  gap: 3px;
-  align-items: center;
+.voice-status-popup.recording {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
 }
 
-.recording-wave span {
-  width: 4px;
-  height: 15px;
-  background: #f5576c;
-  border-radius: 2px;
-  animation: wave 0.5s infinite ease-in-out alternate;
+.voice-status-popup.done {
+  background: rgba(76, 175, 80, 0.9);
+  color: white;
 }
 
-.recording-wave span:nth-child(1) { animation-delay: 0s; }
-.recording-wave span:nth-child(2) { animation-delay: 0.1s; }
-.recording-wave span:nth-child(3) { animation-delay: 0.2s; }
-.recording-wave span:nth-child(4) { animation-delay: 0.3s; }
-.recording-wave span:nth-child(5) { animation-delay: 0.4s; }
+.voice-status-popup.cancel {
+  background: rgba(158, 158, 158, 0.9);
+  color: white;
+}
 
-@keyframes wave {
-  0% { height: 5px; }
-  100% { height: 20px; }
+.voice-status-popup.error {
+  background: rgba(244, 67, 54, 0.9);
+  color: white;
+}
+
+.pulse-ring {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  animation: pulseRing 1s infinite;
+}
+
+@keyframes pulseRing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
 }
 
 .voice-error-tip {
@@ -741,7 +924,7 @@ onUnmounted(() => {
   bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(245, 87, 108, 0.9);
+  background: rgba(244, 67, 54, 0.9);
   color: white;
   padding: 10px 20px;
   border-radius: 20px;
