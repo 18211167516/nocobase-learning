@@ -121,7 +121,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import axios from 'axios'
+import api from '../api'
 
 const isOpen = ref(false)
 const messages = ref([])
@@ -211,7 +211,7 @@ const sendMessage = async () => {
   await scrollToBottom()
 
   try {
-    const response = await axios.post('/api/chat', {
+    const response = await api.post('/chat', {
       message: message,
       context: messages.value.slice(-6)
     })
@@ -441,11 +441,12 @@ const recognizeAudio = async (chunks) => {
     const pcmBuffer = await wavToPcm(wavBuffer)
     const base64Audio = arrayBufferToBase64(pcmBuffer)
     
-    const response = await axios.post('/api/speech-to-text', {
+    console.log('[语音识别] 发送请求到后端...')
+    const response = await api.post('/speech-to-text', {
       audio_data: base64Audio,
       format: 'pcm',
       rate: 16000
-    })
+    }, { timeout: 30000 })
     
     console.log('[语音识别] 识别结果:', response.data)
     
