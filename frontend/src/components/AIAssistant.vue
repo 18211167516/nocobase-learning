@@ -385,10 +385,11 @@ const startVoiceInput = () => {
   recognition.interimResults = true
   recognition.maxAlternatives = 1
 
+  showVoiceStatus('recording')
+
   recognition.onstart = () => {
     isRecording.value = true
     recordingStartTime.value = Date.now()
-    showVoiceStatus('recording')
     
     recordingTimer.value = setInterval(() => {
       recordingDuration.value = Math.floor((Date.now() - recordingStartTime.value) / 1000)
@@ -434,16 +435,18 @@ const startVoiceInput = () => {
     clearInterval(recordingTimer.value)
     const duration = recordingDuration.value
     const transcript = inputMessage.value.trim()
+    const wasActuallyRecording = isRecording.value
+    
     isRecording.value = false
     recordingDuration.value = 0
     
-    if (duration < 1 && !transcript) {
-      showVoiceStatus('cancel')
-    } else if (transcript) {
+    if (transcript) {
       showVoiceStatus('done')
       setTimeout(() => {
         sendMessage()
       }, 500)
+    } else if (wasActuallyRecording && duration > 0) {
+      showVoiceStatus('cancel')
     }
   }
 
