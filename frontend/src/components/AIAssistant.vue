@@ -383,13 +383,13 @@ const startVoiceInput = async () => {
     stream.getTracks().forEach(track => track.stop())
   } catch (e) {
     if (e.name === 'NotAllowedError') {
-      showVoiceStatus('error', '请点击地址栏🔒允许麦克风权限')
+      showVoiceStatus('error', '麦克风权限被拒绝，请点击地址栏🔒 → 麦克风 → 允许')
       return
     } else if (e.name === 'NotFoundError') {
       showVoiceStatus('error', '未检测到麦克风设备')
       return
     } else {
-      showVoiceStatus('error', '麦克风访问失败')
+      showVoiceStatus('error', `麦克风访问失败: ${e.message}`)
       return
     }
   }
