@@ -440,11 +440,13 @@ const startVoiceInput = () => {
     isRecording.value = false
     recordingDuration.value = 0
     
+    console.log('[语音识别] 结束录音')
+    console.log('[语音识别] 录音时长:', duration, '秒')
+    console.log('[语音识别] 识别结果:', transcript || '无')
+    
     if (transcript) {
       showVoiceStatus('done')
-      setTimeout(() => {
-        sendMessage()
-      }, 500)
+      console.log('[语音识别] 文本已放入输入框，等待用户发送')
     } else if (wasActuallyRecording && duration > 0) {
       showVoiceStatus('cancel')
     }
