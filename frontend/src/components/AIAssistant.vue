@@ -78,7 +78,11 @@
           <div class="recording-wave">
             <span></span><span></span><span></span><span></span><span></span>
           </div>
-          <span>正在录音...点击麦克风停止</span>
+          <span>{{ voiceTip || '正在录音...点击麦克风停止' }}</span>
+        </div>
+        
+        <div v-if="voiceError" class="voice-error-tip">
+          <span>⚠️ {{ voiceError }}</span>
         </div>
       </div>
     </transition>
@@ -96,6 +100,8 @@ const isLoading = ref(false)
 const isRecording = ref(false)
 const ttsEnabled = ref(true)
 const messagesContainer = ref(null)
+const voiceTip = ref('')
+const voiceError = ref('')
 
 let recognition = null
 let synthesis = window.speechSynthesis
@@ -268,49 +274,99 @@ const toggleVoiceInput = () => {
   if (isRecording.value) {
     stopVoiceInput()
   } else {
+    voiceError.value = ''
     startVoiceInput()
   }
 }
 
+const showVoiceError = (msg) => {
+  voiceError.value = msg
+  setTimeout(() => {
+    voiceError.value = ''
+  }, 4000)
+}
+
+const showRecordingTip = (msg) => {
+  voiceTip.value = msg
+}
+
+const hideRecordingTip = () => {
+  voiceTip.value = ''
+}
+
 const startVoiceInput = () => {
-  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-    alert('您的浏览器不支持语音识别，请使用 Chrome 浏览器')
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
+  
+  if (!SpeechRecognitionAPI) {
+    showVoiceError('您的浏览器不支持语音识别，请使用 Chrome、Edge 或 Safari 浏览器')
     return
   }
 
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  const SpeechRecognition = SpeechRecognitionAPI
   recognition = new SpeechRecognition()
   recognition.lang = 'zh-CN'
-  recognition.continuous = false
-  recognition.interimResults = false
+  recognition.continuous = true
+  recognition.interimResults = true
+  recognition.maxAlternatives = 1
 
   recognition.onstart = () => {
     isRecording.value = true
+    showRecordingTip('正在聆听，请说话...')
   }
 
   recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript
+    let transcript = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript
+    }
     inputMessage.value = transcript
-    isRecording.value = false
     
-    setTimeout(() => {
-      sendMessage()
-    }, 500)
+    if (event.results[event.results.length - 1].isFinal) {
+      const finalTranscript = transcript
+      inputMessage.value = finalTranscript
+      hideRecordingTip()
+      
+      if (finalTranscript.trim()) {
+        setTimeout(() => {
+          sendMessage()
+        }, 300)
+      }
+    }
   }
 
   recognition.onerror = (event) => {
     console.error('Speech recognition error:', event.error)
     isRecording.value = false
-    if (event.error === 'not-allowed') {
-      alert('请允许麦克风权限')
+    hideRecordingTip()
+    
+    const errorMessages = {
+      'not-allowed': '请允许麦克风权限后重试',
+      'no-speech': '未检测到语音，请重试',
+      'network': '网络错误，请检查网络连接',
+      'audio-capture': '未检测到麦克风设备',
+      'aborted': '语音识别已取消'
     }
+    
+    showVoiceError(errorMessages[event.error] || '语音识别出错，请重试')
   }
 
   recognition.onend = () => {
     isRecording.value = false
+    hideRecordingTip()
+    
+    if (inputMessage.value.trim()) {
+      setTimeout(() => {
+        sendMessage()
+      }, 300)
+    }
   }
 
-  recognition.start()
+  try {
+    recognition.start()
+  } catch (e) {
+    showVoiceError('启动语音识别失败，请刷新页面重试')
+    isRecording.value = false
+  }
 }
 
 const stopVoiceInput = () => {
@@ -678,6 +734,21 @@ onUnmounted(() => {
 @keyframes wave {
   0% { height: 5px; }
   100% { height: 20px; }
+}
+
+.voice-error-tip {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(245, 87, 108, 0.9);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  white-space: nowrap;
+  z-index: 10;
+  animation: fadeIn 0.3s ease;
 }
 
 .slide-up-enter-active,
