@@ -141,7 +141,6 @@ const longPressTimer = ref(null)
 const isLongPress = ref(false)
 const touchStartY = ref(0)
 
-let recognition = null
 let synthesis = window.speechSynthesis
 
 const initMessages = () => {
@@ -370,24 +369,24 @@ const showVoiceStatus = (status, msg = '') => {
   }, 1500)
 }
 
-const startVoiceInput = () => {
-  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
+let mediaRecorder = null
+let audioChunks = []
+
+const startVoiceInput = async () => {
+  console.log('[语音识别] 开始录音')
   
-  if (!SpeechRecognitionAPI) {
-    showVoiceStatus('error', '浏览器不支持语音识别')
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showVoiceStatus('error', '浏览器不支持录音功能')
     return
   }
 
-  const SpeechRecognition = SpeechRecognitionAPI
-  recognition = new SpeechRecognition()
-  recognition.lang = 'zh-CN'
-  recognition.continuous = true
-  recognition.interimResults = true
-  recognition.maxAlternatives = 1
-
-  showVoiceStatus('recording')
-
-  recognition.onstart = () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    audioChunks = []
+    
+    showVoiceStatus('recording')
     isRecording.value = true
     recordingStartTime.value = Date.now()
     
@@ -397,87 +396,130 @@ const startVoiceInput = () => {
         stopVoiceInput()
       }
     }, 1000)
-  }
 
-  recognition.onresult = (event) => {
-    let transcript = ''
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        audioChunks.push(event.data)
+      }
     }
-    inputMessage.value = transcript
-    
-    if (event.results[event.results.length - 1].isFinal) {
-      const finalTranscript = transcript
-      inputMessage.value = finalTranscript
-    }
-  }
 
-  recognition.onerror = (event) => {
-    console.error('Speech recognition error:', event.error)
-    clearInterval(recordingTimer.value)
-    isRecording.value = false
-    recordingDuration.value = 0
-    
-    const errorMessages = {
-      'not-allowed': '请点击地址栏🔒允许麦克风权限',
-      'no-speech': '说话时间太短',
-      'network': '网络错误，请检查网络',
-      'audio-capture': '未检测到麦克风设备',
-      'aborted': ''
+    mediaRecorder.onstop = async () => {
+      console.log('[语音识别] 录音结束')
+      clearInterval(recordingTimer.value)
+      const duration = recordingDuration.value
+      isRecording.value = false
+      recordingDuration.value = 0
+      
+      if (audioChunks.length > 0 && duration > 0) {
+        await recognizeAudio(audioChunks)
+      } else {
+        showVoiceStatus('cancel')
+      }
     }
-    
-    if (event.error !== 'aborted') {
-      showVoiceStatus('error', errorMessages[event.error] || '语音识别出错')
-    }
-  }
 
-  recognition.onend = () => {
-    clearInterval(recordingTimer.value)
-    const duration = recordingDuration.value
-    const transcript = inputMessage.value.trim()
-    const wasActuallyRecording = isRecording.value
+    mediaRecorder.start(100)
+    console.log('[语音识别] 录音已开始')
     
-    isRecording.value = false
-    recordingDuration.value = 0
-    
-    console.log('[语音识别] 结束录音')
-    console.log('[语音识别] 录音时长:', duration, '秒')
-    console.log('[语音识别] 识别结果:', transcript || '无')
-    
-    if (transcript) {
-      showVoiceStatus('done')
-      console.log('[语音识别] 文本已放入输入框，等待用户发送')
-    } else if (wasActuallyRecording && duration > 0) {
-      showVoiceStatus('cancel')
-    }
-  }
-
-  try {
-    recognition.start()
   } catch (e) {
-    showVoiceStatus('error', '启动失败，请重试')
-    isRecording.value = false
+    console.error('[语音识别] 获取麦克风失败:', e)
+    if (e.name === 'NotAllowedError') {
+      showVoiceStatus('error', '请点击地址栏🔒允许麦克风权限')
+    } else {
+      showVoiceStatus('error', '无法访问麦克风')
+    }
   }
+}
+
+const recognizeAudio = async (chunks) => {
+  console.log('[语音识别] 开始识别')
+  
+  const blob = new Blob(chunks, { type: 'audio/webm' })
+  
+  try {
+    const arrayBuffer = await blob.arrayBuffer()
+    const wavBuffer = await webmToWav(arrayBuffer)
+    const pcmBuffer = await wavToPcm(wavBuffer)
+    const base64Audio = arrayBufferToBase64(pcmBuffer)
+    
+    const response = await axios.post('/api/speech-to-text', {
+      audio_data: base64Audio,
+      format: 'pcm',
+      rate: 16000
+    })
+    
+    console.log('[语音识别] 识别结果:', response.data)
+    
+    if (response.data.success && response.data.result && response.data.result.length > 0) {
+      inputMessage.value = response.data.result.join('')
+      showVoiceStatus('done')
+      console.log('[语音识别] 识别成功:', inputMessage.value)
+    } else {
+      showVoiceStatus('error', response.data.error || '识别失败')
+    }
+    
+  } catch (e) {
+    console.error('[语音识别] 识别错误:', e)
+    showVoiceStatus('error', '识别失败，请重试')
+  }
+}
+
+const webmToWav = async (arrayBuffer) => {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+  
+  const sampleRate = 16000
+  const offlineContext = new OfflineAudioContext(1, audioBuffer.length * sampleRate / audioBuffer.sampleRate, sampleRate)
+  const source = offlineContext.createBufferSource()
+  source.buffer = audioBuffer
+  
+  source.connect(offlineContext.destination)
+  source.start()
+  
+  const resampledBuffer = await offlineContext.startRendering()
+  return resampledBuffer
+}
+
+const wavToPcm = (audioBuffer) => {
+  const channelData = audioBuffer.getChannelData(0)
+  const length = channelData.length
+  const pcmBuffer = new ArrayBuffer(length * 2)
+  const view = new DataView(pcmBuffer)
+  
+  for (let i = 0; i < length; i++) {
+    const sample = Math.max(-1, Math.min(1, channelData[i]))
+    view.setInt16(i * 2, sample * 32767, true)
+  }
+  
+  return pcmBuffer
+}
+
+const arrayBufferToBase64 = (buffer) => {
+  let binary = ''
+  const bytes = new Uint8Array(buffer)
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return window.btoa(binary)
 }
 
 const stopVoiceInput = () => {
-  if (recognition) {
+  console.log('[语音识别] 停止录音')
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try {
-      recognition.stop()
+      mediaRecorder.stop()
     } catch (e) {
-      console.error('Stop recognition error:', e)
+      console.error('[语音识别] 停止录音错误:', e)
     }
   }
-  clearInterval(recordingTimer.value)
-  isRecording.value = false
 }
 
 const cancelVoiceInput = () => {
-  if (recognition) {
+  console.log('[语音识别] 取消录音')
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try {
-      recognition.abort()
+      mediaRecorder.stop()
     } catch (e) {
-      console.error('Abort recognition error:', e)
+      console.error('[语音识别] 取消录音错误:', e)
     }
   }
   inputMessage.value = ''
@@ -485,6 +527,7 @@ const cancelVoiceInput = () => {
   isRecording.value = false
   clearInterval(recordingTimer.value)
   recordingDuration.value = 0
+  audioChunks = []
 }
 
 onMounted(() => {
@@ -492,8 +535,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (recognition) {
-    recognition.stop()
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop()
   }
   if (recordingTimer.value) {
     clearInterval(recordingTimer.value)

@@ -7,6 +7,10 @@ import sqlite3
 import json
 import os
 import random
+import requests
+import base64
+import hashlib
+import time
 
 app = FastAPI(title="NocoBase Learning API", version="1.0.0")
 
@@ -17,6 +21,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+BAIDU_APP_ID = "7696362"
+BAIDU_API_KEY = "MDKyi4a5AKpWRYgFFZWkzlFJ"
+BAIDU_SECRET_KEY = "7zEoVgQTCiYi3OVxQaj7U81fc2FgZlad"
+
+access_token = None
+token_expire_time = 0
+
+def get_baidu_access_token():
+    global access_token, token_expire_time
+    
+    if access_token and time.time() < token_expire_time:
+        return access_token
+    
+    url = "https://aip.baidubce.com/oauth/2.0/token"
+    params = {
+        "grant_type": "client_credentials",
+        "client_id": BAIDU_API_KEY,
+        "client_secret": BAIDU_SECRET_KEY
+    }
+    
+    try:
+        response = requests.post(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        access_token = data.get("access_token")
+        expires_in = data.get("expires_in", 3600)
+        token_expire_time = time.time() + expires_in - 60
+        
+        return access_token
+    except Exception as e:
+        print(f"获取百度访问令牌失败: {e}")
+        return None
 
 DATABASE = "nocobase_learning.db"
 
@@ -825,6 +863,44 @@ def chat(chat_message: ChatMessage):
     ]
     
     return {"response": random.choice(default_responses)}
+
+class SpeechRequest(BaseModel):
+    audio_data: str
+    format: str = "pcm"
+    rate: int = 16000
+
+@app.post("/speech-to-text")
+def speech_to_text(request: SpeechRequest):
+    token = get_baidu_access_token()
+    if not token:
+        raise HTTPException(status_code=500, detail="无法获取百度语音服务令牌")
+    
+    try:
+        audio_bytes = base64.b64decode(request.audio_data)
+        
+        url = f"https://vop.baidu.com/server_api"
+        params = {
+            "cuid": hashlib.md5(BAIDU_API_KEY.encode()).hexdigest(),
+            "token": token,
+            "dev_pid": 1537
+        }
+        
+        headers = {
+            "Content-Type": "audio/pcm; rate=16000"
+        }
+        
+        response = requests.post(url, params=params, headers=headers, data=audio_bytes)
+        response.raise_for_status()
+        result = response.json()
+        
+        if result.get("err_no") == 0:
+            return {"success": True, "result": result.get("result", [])}
+        else:
+            return {"success": False, "error": result.get("err_msg", "语音识别失败")}
+            
+    except Exception as e:
+        print(f"语音识别错误: {e}")
+        raise HTTPException(status_code=500, detail=f"语音识别失败: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
