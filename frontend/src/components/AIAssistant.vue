@@ -412,15 +412,15 @@ const startVoiceInput = async () => {
       recordingDuration.value = 0
       
       stream.getTracks().forEach(track => track.stop())
-      if (audioContext) {
-        await audioContext.close()
-        audioContext = null
-      }
       
       console.log('[语音识别] 录音结束，时长:', duration, '秒')
       
       if (audioChunks.length === 0) {
         showVoiceStatus('cancel')
+        if (audioContext) {
+          await audioContext.close()
+          audioContext = null
+        }
         return
       }
       
@@ -430,7 +430,10 @@ const startVoiceInput = async () => {
         console.log('[语音识别] 开始转换音频格式...')
         
         const arrayBuffer = await audioBlob.arrayBuffer()
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+        
+        const newAudioContext = new (window.AudioContext || window.webkitAudioContext)()
+        const audioBuffer = await newAudioContext.decodeAudioData(arrayBuffer)
+        await newAudioContext.close()
         
         const wavBuffer = audioBufferToWav(audioBuffer)
         const base64Audio = arrayBufferToBase64(wavBuffer)
@@ -458,6 +461,11 @@ const startVoiceInput = async () => {
       } catch (error) {
         console.error('[语音识别] 请求错误:', error)
         showVoiceStatus('error', '网络错误，请重试')
+      } finally {
+        if (audioContext) {
+          await audioContext.close()
+          audioContext = null
+        }
       }
     }
     
