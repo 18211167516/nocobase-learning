@@ -22,7 +22,7 @@ const getBaseURL = () => {
 
 const api = axios.create({
   baseURL: getBaseURL(),
-  timeout: 10000
+  timeout: 60000
 })
 
 api.interceptors.response.use(
@@ -58,6 +58,6 @@ export const getBadges = () => api.get('/badges')
 export const getRecommendations = () => api.get('/recommendations')
 export const search = (query) => api.get(`/search?query=${encodeURIComponent(query)}`)
 export const chat = (data) => api.post('/chat', data)
-export const speechToText = (data) => api.post('/speech-to-text', data, { timeout: 30000 })
+export const speechToText = (data) => api.post('/speech-to-text', data, { timeout: 60000 })
 
 export default api
