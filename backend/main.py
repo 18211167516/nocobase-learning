@@ -12,6 +12,11 @@ import base64
 import hashlib
 import hmac
 import time
+import asyncio
+import websockets
+from urllib.parse import urlencode, quote
+from wsgiref.handlers import format_date_time
+from time import mktime
 
 app = FastAPI(title="NocoBase Learning API", version="1.0.0")
 
@@ -840,52 +845,121 @@ class SpeechRequest(BaseModel):
     format: str = "pcm"
     rate: int = 16000
 
-@app.post("/speech-to-text")
-def speech_to_text(request: SpeechRequest):
+def create_xunfei_url():
+    url = "wss://iat-api.xfyun.cn/v2/iat"
+    now = datetime.now()
+    date = format_date_time(mktime(now.timetuple()))
+    
+    signature_origin = f"host: iat-api.xfyun.cn\ndate: {date}\nGET /v2/iat HTTP/1.1"
+    signature_sha = hmac.new(
+        XUNFEI_API_SECRET.encode('utf-8'),
+        signature_origin.encode('utf-8'),
+        digestmod=hashlib.sha256
+    ).digest()
+    signature = base64.b64encode(signature_sha).decode(encoding='utf-8')
+    
+    authorization_origin = f'api_key="{XUNFEI_API_KEY}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature}"'
+    authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode(encoding='utf-8')
+    
+    params = {
+        "authorization": authorization,
+        "date": date,
+        "host": "iat-api.xfyun.cn"
+    }
+    
+    return url + '?' + urlencode(params)
+
+async def xunfei_iat(audio_base64: str):
+    ws_url = create_xunfei_url()
+    
+    result_text = ""
+    
     try:
-        audio_bytes = base64.b64decode(request.audio_data)
-        
-        cur_time = str(int(time.time()))
-        param_type = "iAT"
-        engine_type = "sms-en16k"
-        
-        param_dict = {
-            "engine_type": engine_type,
-            "aue": "raw"
-        }
-        param_bytes = json.dumps(param_dict).encode('utf-8')
-        param_base64 = base64.b64encode(param_bytes).decode('utf-8')
-        
-        m2 = hashlib.md5()
-        m2.update((XUNFEI_API_KEY + cur_time + param_base64).encode('utf-8'))
-        checksum = m2.hexdigest()
-        
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-            "X-Appid": XUNFEI_APP_ID,
-            "X-CurTime": cur_time,
-            "X-Param": param_base64,
-            "X-CheckSum": checksum
-        }
-        
-        data = {
-            "audio": request.audio_data
-        }
-        
-        url = "http://api.xfyun.cn/v1/service/v1/iat"
-        response = requests.post(url, headers=headers, data=data, timeout=10)
-        result = response.json()
-        
-        print(f"讯飞API返回: {result}")
-        
-        if result.get("code") == "0":
-            data_str = result.get("data", "")
-            return {"success": True, "result": [data_str]}
-        else:
-            error_msg = result.get("desc", "语音识别失败")
-            print(f"讯飞API错误: {error_msg}")
-            return {"success": False, "error": error_msg}
+        async with websockets.connect(ws_url) as ws:
+            frame_size = 1280
+            audio_bytes = base64.b64decode(audio_base64)
             
+            common = {"app_id": XUNFEI_APP_ID}
+            business = {
+                "language": "zh_cn",
+                "domain": "iat",
+                "accent": "mandarin",
+                "eos": 6000,
+                "ptt": 1
+            }
+            
+            first_frame = {
+                "common": common,
+                "business": business,
+                "data": {
+                    "status": 0,
+                    "format": "audio/L16;rate=16000",
+                    "encoding": "raw",
+                    "audio": ""
+                }
+            }
+            
+            await ws.send(json.dumps(first_frame))
+            
+            for i in range(0, len(audio_bytes), frame_size):
+                chunk = audio_bytes[i:i + frame_size]
+                chunk_base64 = base64.b64encode(chunk).decode('utf-8')
+                
+                frame = {
+                    "data": {
+                        "status": 1,
+                        "format": "audio/L16;rate=16000",
+                        "encoding": "raw",
+                        "audio": chunk_base64
+                    }
+                }
+                await ws.send(json.dumps(frame))
+                await asyncio.sleep(0.04)
+            
+            last_frame = {
+                "data": {
+                    "status": 2,
+                    "format": "audio/L16;rate=16000",
+                    "encoding": "raw",
+                    "audio": ""
+                }
+            }
+            await ws.send(json.dumps(last_frame))
+            
+            while True:
+                try:
+                    response = await asyncio.wait_for(ws.recv(), timeout=10)
+                    result = json.loads(response)
+                    
+                    if result.get("code") != 0:
+                        return {"success": False, "error": result.get("message", "识别失败")}
+                    
+                    data = result.get("data", {})
+                    if data.get("result"):
+                        ws_list = data["result"].get("ws", [])
+                        for ws_item in ws_list:
+                            for cw in ws_item.get("cw", []):
+                                result_text += cw.get("w", "")
+                    
+                    if data.get("status") == 2:
+                        break
+                        
+                except asyncio.TimeoutError:
+                    break
+                    
+    except Exception as e:
+        print(f"WebSocket错误: {e}")
+        return {"success": False, "error": str(e)}
+    
+    return {"success": True, "result": [result_text]} if result_text else {"success": False, "error": "未识别到内容"}
+
+@app.post("/speech-to-text")
+async def speech_to_text(request: SpeechRequest):
+    try:
+        print(f"[语音识别] 收到请求，音频大小: {len(request.audio_data)} 字符")
+        result = await xunfei_iat(request.audio_data)
+        print(f"[语音识别] 识别结果: {result}")
+        return result
     except Exception as e:
         print(f"语音识别错误: {e}")
         raise HTTPException(status_code=500, detail=f"语音识别失败: {str(e)}")
